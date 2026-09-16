@@ -24,10 +24,16 @@ enum ApplicationType {
 }
 
 enum ApplicationStatus {
-  PENDING
+  DRAFT
+  SUBMITTED
   UNDER_REVIEW
+  ADDITIONAL_INFO_REQUIRED
+  RESUBMITTED
   APPROVED
+  APPROVED_WITH_CONDITIONS
   REJECTED
+  COMPLETED
+  CANCELLED
 }
 
 model User {
@@ -42,8 +48,9 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  ownerships   Ownership[]
-  applications Application[]
+  ownerships           Ownership[]
+  citizenApplications  Application[] @relation("CitizenApplications")
+  assignedApplications Application[] @relation("AssignedOfficerApplications")
 
   @@map("users")
 }
@@ -82,19 +89,50 @@ model Ownership {
   @@map("ownerships")
 }
 
+model Department {
+  id          String        @id @default(uuid())
+  name        String
+  code        String        @unique
+  description String?
+  isActive    Boolean       @default(true)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  applications Application[]
+
+  @@map("departments")
+}
+
 model Application {
   id                String            @id @default(uuid())
   applicationNumber String            @unique
   type              ApplicationType
-  status            ApplicationStatus @default(PENDING)
+  status            ApplicationStatus @default(DRAFT)
   description       String
   parcelId          String
   citizenId         String
+  departmentId      String?
+  assignedOfficerId String?
+  submittedAt       DateTime?
+  reviewedAt        DateTime?
+  decisionAt        DateTime?
+  reviewRemarks     String?
+  decisionRemarks   String?
+  citizenResponse   String?
   createdAt         DateTime          @default(now())
   updatedAt         DateTime          @updatedAt
 
-  parcel  Parcel @relation(fields: [parcelId], references: [id], onDelete: Restrict)
-  citizen User   @relation(fields: [citizenId], references: [id], onDelete: Restrict)
+  parcel          Parcel      @relation(fields: [parcelId], references: [id], onDelete: Restrict)
+  citizen         User        @relation("CitizenApplications", fields: [citizenId], references: [id], onDelete: Restrict)
+  department      Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  assignedOfficer User?       @relation("AssignedOfficerApplications", fields: [assignedOfficerId], references: [id], onDelete: SetNull)
+
+  @@index([citizenId])
+  @@index([parcelId])
+  @@index([status])
+  @@index([departmentId])
+  @@index([assignedOfficerId])
+  @@index([createdAt])
 
   @@map("applications")
 }

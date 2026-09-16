@@ -4,6 +4,9 @@ const dbRoutes = require("./dbRoutes");
 const authRoutes = require("./authRoutes");
 const parcelRoutes = require("./parcelRoutes");
 const ownershipRoutes = require("./ownershipRoutes");
+const parcelDossierRoutes = require("./parcelDossierRoutes");
+const applicationRoutes = require("./applicationRoutes");
+const officerApplicationRoutes = require("./officerApplicationRoutes");
 
 const router = express.Router();
 
@@ -11,6 +14,9 @@ router.use("/health", healthRoutes);
 router.use("/test-db", dbRoutes);
 router.use("/v1/auth", authRoutes);
 router.use("/v1/parcels", parcelRoutes);
+router.use("/v1/parcels", parcelDossierRoutes);
 router.use("/v1/ownerships", ownershipRoutes);
+router.use("/v1/applications", applicationRoutes);
+router.use("/v1/officer", officerApplicationRoutes);
 
 module.exports = router;
