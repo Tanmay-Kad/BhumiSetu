@@ -36,6 +36,18 @@ enum ApplicationStatus {
   CANCELLED
 }
 
+enum DocumentType {
+  IDENTITY_PROOF
+  SALE_DEED
+  LAND_RECORD
+  SITE_PLAN
+  BUILDING_PLAN
+  PROPERTY_TAX_RECEIPT
+  TREE_RELATED_DOCUMENT
+  UTILITY_DOCUMENT
+  OTHER
+}
+
 model User {
   id           String   @id @default(uuid())
   name         String
@@ -51,6 +63,7 @@ model User {
   ownerships           Ownership[]
   citizenApplications  Application[] @relation("CitizenApplications")
   assignedApplications Application[] @relation("AssignedOfficerApplications")
+  uploadedDocuments    ApplicationDocument[] @relation("UploadedApplicationDocuments")
 
   @@map("users")
 }
@@ -126,6 +139,7 @@ model Application {
   citizen         User        @relation("CitizenApplications", fields: [citizenId], references: [id], onDelete: Restrict)
   department      Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
   assignedOfficer User?       @relation("AssignedOfficerApplications", fields: [assignedOfficerId], references: [id], onDelete: SetNull)
+  documents       ApplicationDocument[]
 
   @@index([citizenId])
   @@index([parcelId])
@@ -135,4 +149,26 @@ model Application {
   @@index([createdAt])
 
   @@map("applications")
+}
+
+model ApplicationDocument {
+  id               String       @id @default(uuid())
+  applicationId    String
+  uploadedById     String
+  documentType     DocumentType
+  originalFileName String
+  storageKey       String
+  mimeType         String
+  fileSize         Int
+  uploadedAt       DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  application Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  uploadedBy  User        @relation("UploadedApplicationDocuments", fields: [uploadedById], references: [id], onDelete: Restrict)
+
+  @@index([applicationId])
+  @@index([uploadedById])
+  @@index([documentType])
+  @@index([uploadedAt])
+  @@map("application_documents")
 }
