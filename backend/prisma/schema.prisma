@@ -60,6 +60,17 @@ enum ApplicationAction {
   APPLICATION_CANCELLED
 }
 
+enum NotificationType {
+  APPLICATION_SUBMITTED
+  APPLICATION_UNDER_REVIEW
+  APPLICATION_ADDITIONAL_INFO_REQUIRED
+  APPLICATION_RESUBMITTED
+  APPLICATION_APPROVED
+  APPLICATION_APPROVED_WITH_CONDITIONS
+  APPLICATION_REJECTED
+  APPLICATION_CANCELLED
+}
+
 model User {
   id           String   @id @default(uuid())
   name         String
@@ -77,6 +88,7 @@ model User {
   assignedApplications Application[] @relation("AssignedOfficerApplications")
   uploadedDocuments    ApplicationDocument[] @relation("UploadedApplicationDocuments")
   applicationHistory   ApplicationHistory[] @relation("ApplicationHistoryActor")
+  notifications        Notification[]
 
   @@map("users")
 }
@@ -154,6 +166,7 @@ model Application {
   assignedOfficer User?       @relation("AssignedOfficerApplications", fields: [assignedOfficerId], references: [id], onDelete: SetNull)
   documents       ApplicationDocument[]
   history         ApplicationHistory[]
+  notifications   Notification[]
 
   @@index([citizenId])
   @@index([parcelId])
@@ -204,4 +217,26 @@ model ApplicationHistory {
   @@index([actorId])
   @@index([createdAt])
   @@map("application_history")
+}
+
+model Notification {
+  id            String           @id @default(uuid())
+  userId        String
+  applicationId String?
+  type          NotificationType
+  title         String
+  message       String
+  isRead        Boolean          @default(false)
+  readAt        DateTime?
+  createdAt     DateTime         @default(now())
+
+  user          User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  application   Application?     @relation(fields: [applicationId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([applicationId])
+  @@index([isRead])
+  @@index([createdAt])
+  @@index([userId, isRead, createdAt])
+  @@map("notifications")
 }

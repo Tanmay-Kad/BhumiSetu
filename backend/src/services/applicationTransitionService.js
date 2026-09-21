@@ -1,4 +1,5 @@
 const prisma = require("../utils/prisma");
+const { createApplicationNotification } = require("./notificationService");
 
 const APPLICATION_ACTIONS = Object.freeze({
   APPLICATION_CREATED: "APPLICATION_CREATED",
@@ -104,6 +105,7 @@ const transitionApplication = async ({
       where: { id: applicationId },
       select: {
         id: true,
+        applicationNumber: true,
         status: true,
         type: true,
         citizenId: true,
@@ -167,6 +169,14 @@ const transitionApplication = async ({
       },
     });
 
+    const notificationRecord = await createApplicationNotification(tx, {
+      citizenId: currentApplication.citizenId,
+      applicationId,
+      applicationNumber: currentApplication.applicationNumber,
+      action,
+      remarks,
+    });
+
     const updatedApplication = await tx.application.findUnique({
       where: { id: applicationId },
       ...(select ? { select } : {}),
@@ -175,6 +185,7 @@ const transitionApplication = async ({
     return {
       application: updatedApplication,
       history: historyRecord,
+      notification: notificationRecord,
     };
   });
 };

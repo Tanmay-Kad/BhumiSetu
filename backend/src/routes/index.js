@@ -8,6 +8,7 @@ const parcelDossierRoutes = require("./parcelDossierRoutes");
 const applicationRoutes = require("./applicationRoutes");
 const applicationDocumentRoutes = require("./applicationDocumentRoutes");
 const officerApplicationRoutes = require("./officerApplicationRoutes");
+const notificationRoutes = require("./notificationRoutes");
 
 const router = express.Router();
 
@@ -20,5 +21,6 @@ router.use("/v1/ownerships", ownershipRoutes);
 router.use("/v1/applications", applicationRoutes);
 router.use("/v1/applications", applicationDocumentRoutes);
 router.use("/v1/officer", officerApplicationRoutes);
+router.use("/v1/notifications", notificationRoutes);
 
 module.exports = router;
