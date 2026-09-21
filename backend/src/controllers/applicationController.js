@@ -1,6 +1,11 @@
 const { randomInt } = require("crypto");
 const prisma = require("../utils/prisma");
 const { resolveRoutedDepartment } = require("../utils/applicationRouting");
+const { getOfficerDepartment } = require("../utils/officerDepartment");
+const {
+  createApplicationWithHistory,
+  transitionApplication,
+} = require("../services/applicationTransitionService");
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const APPLICATION_TYPES = new Set([
@@ -156,15 +161,15 @@ const createApplication = async (req, res, next) => {
 
     for (let attempt = 0; attempt < APPLICATION_NUMBER_ATTEMPTS; attempt += 1) {
       try {
-        const application = await prisma.application.create({
+        const application = await createApplicationWithHistory({
           data: {
             applicationNumber: generateApplicationNumber(),
             type: input.type,
             description: input.description,
             parcelId: input.parcelId,
             citizenId: req.user.id,
-            status: "DRAFT",
           },
+          actorId: req.user.id,
           select: applicationSelect,
         });
 
@@ -205,32 +210,22 @@ const submitApplication = async (req, res, next) => {
       });
     }
 
-    const application = await prisma.$transaction(async (transaction) => {
-      const routedDepartment = await resolveRoutedDepartment(transaction, result.application.type);
-      const submittedAt = new Date();
-      const updateResult = await transaction.application.updateMany({
-        where: {
-          id: applicationId,
-          citizenId: req.user.id,
-          status: "DRAFT",
-        },
-        data: {
-          status: "SUBMITTED",
-          submittedAt,
+    const { application } = await transitionApplication({
+      applicationId,
+      action: "APPLICATION_SUBMITTED",
+      actorId: req.user.id,
+      whereConditions: {
+        citizenId: req.user.id,
+      },
+      updateData: async (tx, currentApp) => {
+        const routedDepartment = await resolveRoutedDepartment(tx, currentApp.type);
+        return {
+          submittedAt: new Date(),
           departmentId: routedDepartment?.id ?? null,
-        },
-      });
-
-      if (updateResult.count !== 1) {
-        const error = new Error("Only draft applications can be submitted");
-        error.statusCode = 400;
-        throw error;
-      }
-
-      return transaction.application.findUnique({
-        where: { id: applicationId },
-        select: applicationSelect,
-      });
+        };
+      },
+      select: applicationSelect,
+      conflictMessage: "Only draft applications can be submitted",
     });
 
     return res.status(200).json({ status: "success", data: application });
@@ -303,10 +298,15 @@ const cancelApplication = async (req, res, next) => {
       });
     }
 
-    const application = await prisma.application.update({
-      where: { id: applicationId },
-      data: { status: "CANCELLED" },
+    const { application } = await transitionApplication({
+      applicationId,
+      action: "APPLICATION_CANCELLED",
+      actorId: req.user.id,
+      whereConditions: {
+        citizenId: req.user.id,
+      },
       select: applicationSelect,
+      conflictMessage: "Only draft or submitted applications can be cancelled",
     });
 
     return res.status(200).json({ status: "success", data: application });
@@ -357,35 +357,107 @@ const resubmitApplication = async (req, res, next) => {
       });
     }
 
-    const application = await prisma.$transaction(async (transaction) => {
-      const updateResult = await transaction.application.updateMany({
-        where: {
-          id: applicationId,
-          citizenId: req.user.id,
-          status: "ADDITIONAL_INFO_REQUIRED",
-        },
-        data: {
-          status: "RESUBMITTED",
-          citizenResponse: parsedResponse.value,
-        },
-      });
-
-      if (updateResult.count !== 1) {
-        const error = new Error("Application is no longer available for resubmission");
-        error.statusCode = 409;
-        throw error;
-      }
-
-      return transaction.application.findUnique({
-        where: { id: applicationId },
-        select: resubmissionApplicationSelect,
-      });
+    const { application } = await transitionApplication({
+      applicationId,
+      action: "APPLICATION_RESUBMITTED",
+      actorId: req.user.id,
+      remarks: parsedResponse.value,
+      whereConditions: {
+        citizenId: req.user.id,
+      },
+      updateData: {
+        citizenResponse: parsedResponse.value,
+      },
+      select: resubmissionApplicationSelect,
+      conflictMessage: "Application is no longer available for resubmission",
     });
 
     return res.status(200).json({
       status: "success",
       message: "Application resubmitted successfully",
       data: application,
+    });
+  } catch (error) {
+    return next(error);
+  }
+};
+
+const getApplicationHistory = async (req, res, next) => {
+  try {
+    const { applicationId } = req.params;
+
+    if (!isValidId(applicationId)) {
+      return res.status(400).json({ status: "error", message: "A valid applicationId is required" });
+    }
+
+    const application = await prisma.application.findUnique({
+      where: { id: applicationId },
+      select: {
+        id: true,
+        citizenId: true,
+        departmentId: true,
+      },
+    });
+
+    if (!application) {
+      return res.status(404).json({ status: "error", message: "Application not found" });
+    }
+
+    if (req.user.role === "CITIZEN") {
+      if (application.citizenId !== req.user.id) {
+        return res.status(403).json({
+          status: "error",
+          message: "You are not authorized to access this application's history",
+        });
+      }
+    } else if (req.user.role === "OFFICER") {
+      const officerDepartment = await getOfficerDepartment(prisma, req.user.id);
+      if (!officerDepartment || !officerDepartment.isActive) {
+        return res.status(403).json({
+          status: "error",
+          message: "No active department is configured for this officer",
+        });
+      }
+
+      if (application.departmentId !== officerDepartment.id) {
+        return res.status(403).json({
+          status: "error",
+          message: "You are not authorized to access application history for another department",
+        });
+      }
+    } else if (req.user.role !== "ADMIN") {
+      return res.status(403).json({
+        status: "error",
+        message: "You are not authorized to access this resource",
+      });
+    }
+
+    const history = await prisma.applicationHistory.findMany({
+      where: { applicationId },
+      orderBy: [
+        { createdAt: "asc" },
+        { id: "asc" },
+      ],
+      select: {
+        id: true,
+        action: true,
+        fromStatus: true,
+        toStatus: true,
+        remarks: true,
+        createdAt: true,
+        actor: {
+          select: {
+            id: true,
+            name: true,
+            role: true,
+          },
+        },
+      },
+    });
+
+    return res.status(200).json({
+      status: "success",
+      data: history,
     });
   } catch (error) {
     return next(error);
@@ -399,4 +471,5 @@ module.exports = {
   getApplicationById,
   cancelApplication,
   resubmitApplication,
+  getApplicationHistory,
 };

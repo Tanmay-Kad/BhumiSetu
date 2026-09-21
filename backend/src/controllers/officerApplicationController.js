@@ -1,5 +1,6 @@
 const prisma = require("../utils/prisma");
 const { getOfficerDepartment } = require("../utils/officerDepartment");
+const { transitionApplication } = require("../services/applicationTransitionService");
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const APPLICATION_TYPES = new Set([
@@ -35,6 +36,12 @@ const DECISION_STATUS_MAP = Object.freeze({
   APPROVED_WITH_CONDITIONS: "APPROVED_WITH_CONDITIONS",
   REJECTED: "REJECTED",
   ADDITIONAL_INFO_REQUIRED: "ADDITIONAL_INFO_REQUIRED",
+});
+const DECISION_ACTION_MAP = Object.freeze({
+  APPROVED: "APPLICATION_APPROVED",
+  APPROVED_WITH_CONDITIONS: "APPLICATION_APPROVED_WITH_CONDITIONS",
+  REJECTED: "APPLICATION_REJECTED",
+  ADDITIONAL_INFO_REQUIRED: "ADDITIONAL_INFO_REQUESTED",
 });
 const DECISIONS_REQUIRING_REMARKS = new Set([
   "APPROVED_WITH_CONDITIONS",
@@ -307,31 +314,21 @@ const startApplicationReview = async (req, res, next) => {
       });
     }
 
-    const updatedApplication = await prisma.$transaction(async (transaction) => {
-      const updateResult = await transaction.application.updateMany({
-        where: {
-          id: applicationId,
-          status: { in: REVIEWABLE_APPLICATION_STATUSES },
-          ...(req.user.role === "OFFICER" ? { departmentId: officerDepartment.id } : {}),
-        },
-        data: {
-          status: "UNDER_REVIEW",
-          assignedOfficerId: req.user.id,
-          reviewedAt: new Date(),
-          ...(parsedRemarks.value === undefined ? {} : { reviewRemarks: parsedRemarks.value }),
-        },
-      });
-
-      if (updateResult.count !== 1) {
-        const error = new Error("Application is no longer available to start review");
-        error.statusCode = 409;
-        throw error;
-      }
-
-      return transaction.application.findUnique({
-        where: { id: applicationId },
-        select: reviewApplicationSelect,
-      });
+    const { application: updatedApplication } = await transitionApplication({
+      applicationId,
+      action: "REVIEW_STARTED",
+      actorId: req.user.id,
+      remarks: parsedRemarks.value !== undefined ? parsedRemarks.value : null,
+      whereConditions: {
+        ...(req.user.role === "OFFICER" ? { departmentId: officerDepartment.id } : {}),
+      },
+      updateData: {
+        assignedOfficerId: req.user.id,
+        reviewedAt: new Date(),
+        ...(parsedRemarks.value === undefined ? {} : { reviewRemarks: parsedRemarks.value }),
+      },
+      select: reviewApplicationSelect,
+      conflictMessage: "Application is no longer available to start review",
     });
 
     return res.status(200).json({
@@ -428,36 +425,28 @@ const recordApplicationDecision = async (req, res, next) => {
       });
     }
 
-    const { status, decisionRemarks } = parsedDecision.value;
-    const updatedApplication = await prisma.$transaction(async (transaction) => {
-      const updateResult = await transaction.application.updateMany({
-        where: {
-          id: applicationId,
-          status: "UNDER_REVIEW",
-          ...(req.user.role === "OFFICER"
-            ? {
-                departmentId: officerDepartment.id,
-                assignedOfficerId: req.user.id,
-              }
-            : {}),
-        },
-        data: {
-          status,
-          decisionAt: new Date(),
-          ...(decisionRemarks === undefined ? {} : { decisionRemarks }),
-        },
-      });
+    const { decision, decisionRemarks } = parsedDecision.value;
+    const action = DECISION_ACTION_MAP[decision];
 
-      if (updateResult.count !== 1) {
-        const error = new Error("Application is no longer available for a decision");
-        error.statusCode = 409;
-        throw error;
-      }
-
-      return transaction.application.findUnique({
-        where: { id: applicationId },
-        select: decisionApplicationSelect,
-      });
+    const { application: updatedApplication } = await transitionApplication({
+      applicationId,
+      action,
+      actorId: req.user.id,
+      remarks: decisionRemarks !== undefined ? decisionRemarks : null,
+      whereConditions: {
+        ...(req.user.role === "OFFICER"
+          ? {
+              departmentId: officerDepartment.id,
+              assignedOfficerId: req.user.id,
+            }
+          : {}),
+      },
+      updateData: {
+        decisionAt: new Date(),
+        ...(decisionRemarks === undefined ? {} : { decisionRemarks }),
+      },
+      select: decisionApplicationSelect,
+      conflictMessage: "Application is no longer available for a decision",
     });
 
     return res.status(200).json({

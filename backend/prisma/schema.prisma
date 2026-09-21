@@ -48,6 +48,18 @@ enum DocumentType {
   OTHER
 }
 
+enum ApplicationAction {
+  APPLICATION_CREATED
+  APPLICATION_SUBMITTED
+  REVIEW_STARTED
+  ADDITIONAL_INFO_REQUESTED
+  APPLICATION_RESUBMITTED
+  APPLICATION_APPROVED
+  APPLICATION_APPROVED_WITH_CONDITIONS
+  APPLICATION_REJECTED
+  APPLICATION_CANCELLED
+}
+
 model User {
   id           String   @id @default(uuid())
   name         String
@@ -64,6 +76,7 @@ model User {
   citizenApplications  Application[] @relation("CitizenApplications")
   assignedApplications Application[] @relation("AssignedOfficerApplications")
   uploadedDocuments    ApplicationDocument[] @relation("UploadedApplicationDocuments")
+  applicationHistory   ApplicationHistory[] @relation("ApplicationHistoryActor")
 
   @@map("users")
 }
@@ -140,6 +153,7 @@ model Application {
   department      Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
   assignedOfficer User?       @relation("AssignedOfficerApplications", fields: [assignedOfficerId], references: [id], onDelete: SetNull)
   documents       ApplicationDocument[]
+  history         ApplicationHistory[]
 
   @@index([citizenId])
   @@index([parcelId])
@@ -171,4 +185,23 @@ model ApplicationDocument {
   @@index([documentType])
   @@index([uploadedAt])
   @@map("application_documents")
+}
+
+model ApplicationHistory {
+  id         String           @id @default(uuid())
+  applicationId String
+  actorId    String?
+  action     ApplicationAction
+  fromStatus ApplicationStatus?
+  toStatus   ApplicationStatus
+  remarks    String?
+  createdAt  DateTime         @default(now())
+
+  application Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  actor       User?       @relation("ApplicationHistoryActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([applicationId])
+  @@index([actorId])
+  @@index([createdAt])
+  @@map("application_history")
 }
