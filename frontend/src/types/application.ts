@@ -46,11 +46,11 @@ export interface ApplicationSummary {
   applicationNumber: string;
   type: ApplicationType;
   status: ApplicationStatus;
-  description: string;
+  description?: string | null;
   submittedAt?: string | null;
   createdAt: string;
   updatedAt: string;
-  parcel?: ApplicationParcel;
+  parcel?: ApplicationParcel | null;
   department?: ApplicationDepartment | null;
   citizen?: ApplicationCitizen;
 }
