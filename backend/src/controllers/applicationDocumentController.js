@@ -1,4 +1,7 @@
+const crypto = require("crypto");
 const prisma = require("../utils/prisma");
+const storageService = require("../services/storageService");
+const { validateUploadedFile } = require("../utils/fileValidation");
 const { getOfficerDepartment } = require("../utils/officerDepartment");
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -145,10 +148,14 @@ const parseDocumentMetadata = (body) => {
   };
 };
 
+/**
+ * Uploads a document with binary file storage, or records metadata (backward compatible).
+ */
 const addApplicationDocument = async (req, res, next) => {
+  let savedStorageKey = null;
+
   try {
     const { applicationId } = req.params;
-    const parsedMetadata = parseDocumentMetadata(req.body);
 
     if (req.user.role !== "CITIZEN") {
       return res.status(403).json({
@@ -161,50 +168,105 @@ const addApplicationDocument = async (req, res, next) => {
       return res.status(400).json({ status: "error", message: "A valid applicationId is required" });
     }
 
+    const application = await prisma.application.findUnique({
+      where: { id: applicationId },
+      select: {
+        id: true,
+        citizenId: true,
+        status: true,
+      },
+    });
+
+    if (!application) {
+      return res.status(404).json({ status: "error", message: "Application not found" });
+    }
+
+    if (application.citizenId !== req.user.id) {
+      return res.status(403).json({
+        status: "error",
+        message: "You are not authorized to add documents to this application",
+      });
+    }
+
+    if (!DOCUMENT_CREATION_STATUSES.has(application.status)) {
+      return res.status(400).json({
+        status: "error",
+        message: "Documents cannot be added while the application is in its current status",
+      });
+    }
+
+    const isMultipart =
+      req.is("multipart/form-data") ||
+      (typeof req.headers["content-type"] === "string" &&
+        req.headers["content-type"].includes("multipart/form-data")) ||
+      Boolean(req.file);
+
+    // Primary path: Multipart binary file upload
+    if (isMultipart) {
+      if (!req.file) {
+        return res.status(400).json({ status: "error", message: "file is required" });
+      }
+
+      const documentType =
+        typeof req.body?.documentType === "string" ? req.body.documentType.trim() : "";
+      if (!documentType) {
+        return res.status(400).json({ status: "error", message: "documentType is required" });
+      }
+      if (!DOCUMENT_TYPES.has(documentType)) {
+        return res.status(400).json({ status: "error", message: "documentType must be a valid document type" });
+      }
+
+      const validation = validateUploadedFile(req.file);
+      if (!validation.valid) {
+        return res.status(400).json({ status: "error", message: validation.error });
+      }
+
+      const documentId = crypto.randomUUID();
+      const storageKey = `applications/${application.id}/${documentId}`;
+
+      // Save physical file
+      await storageService.saveFile(storageKey, req.file.buffer);
+      savedStorageKey = storageKey;
+
+      // Insert metadata into database
+      const document = await prisma.applicationDocument.create({
+        data: {
+          id: documentId,
+          applicationId: application.id,
+          uploadedById: req.user.id,
+          documentType,
+          originalFileName: validation.sanitizedFileName,
+          storageKey,
+          mimeType: validation.mimeType,
+          fileSize: validation.fileSize,
+        },
+        select: applicationDocumentSelect,
+      });
+
+      return res.status(201).json({
+        status: "success",
+        message: "Document uploaded successfully",
+        data: document,
+      });
+    }
+
+    // Backward-compatible path: JSON metadata-only payload
+    const parsedMetadata = parseDocumentMetadata(req.body);
     if (parsedMetadata.error) {
       return res.status(400).json({ status: "error", message: parsedMetadata.error });
     }
 
-    const document = await prisma.$transaction(async (transaction) => {
-      const application = await transaction.application.findUnique({
-        where: { id: applicationId },
-        select: {
-          id: true,
-          citizenId: true,
-          status: true,
-        },
-      });
-
-      if (!application) {
-        const error = new Error("Application not found");
-        error.statusCode = 404;
-        throw error;
-      }
-
-      if (application.citizenId !== req.user.id) {
-        const error = new Error("You are not authorized to add documents to this application");
-        error.statusCode = 403;
-        throw error;
-      }
-
-      if (!DOCUMENT_CREATION_STATUSES.has(application.status)) {
-        const error = new Error("Documents cannot be added while the application is in its current status");
-        error.statusCode = 400;
-        throw error;
-      }
-
-      return transaction.applicationDocument.create({
-        data: {
-          applicationId: application.id,
-          uploadedById: req.user.id,
-          documentType: parsedMetadata.value.documentType,
-          originalFileName: parsedMetadata.value.originalFileName,
-          storageKey: parsedMetadata.value.storageKey,
-          mimeType: parsedMetadata.value.mimeType,
-          fileSize: parsedMetadata.value.fileSize,
-        },
-        select: applicationDocumentSelect,
-      });
+    const document = await prisma.applicationDocument.create({
+      data: {
+        applicationId: application.id,
+        uploadedById: req.user.id,
+        documentType: parsedMetadata.value.documentType,
+        originalFileName: parsedMetadata.value.originalFileName,
+        storageKey: parsedMetadata.value.storageKey,
+        mimeType: parsedMetadata.value.mimeType,
+        fileSize: parsedMetadata.value.fileSize,
+      },
+      select: applicationDocumentSelect,
     });
 
     return res.status(201).json({
@@ -213,6 +275,14 @@ const addApplicationDocument = async (req, res, next) => {
       data: document,
     });
   } catch (error) {
+    // Failure cleanup: Remove orphaned physical file if database insertion fails
+    if (savedStorageKey) {
+      try {
+        await storageService.deleteFile(savedStorageKey);
+      } catch (cleanupError) {
+        console.error("Failed to clean up orphaned storage file:", cleanupError);
+      }
+    }
     return next(error);
   }
 };
@@ -280,6 +350,75 @@ const getApplicationDocument = async (req, res, next) => {
   }
 };
 
+/**
+ * Downloads the binary file of an application document.
+ */
+const getApplicationDocumentFile = async (req, res, next) => {
+  try {
+    const { applicationId, documentId } = req.params;
+
+    if (!isValidId(applicationId) || !isValidId(documentId)) {
+      return res.status(400).json({
+        status: "error",
+        message: "A valid applicationId and documentId are required",
+      });
+    }
+
+    const application = await getApplicationForDocumentAccess(applicationId);
+    if (!application) {
+      return res.status(404).json({ status: "error", message: "Application not found" });
+    }
+
+    const authorizationError = await authorizeApplicationDocumentRead(req, application);
+    if (authorizationError) {
+      return res.status(403).json({ status: "error", message: authorizationError });
+    }
+
+    const document = await prisma.applicationDocument.findFirst({
+      where: { id: documentId, applicationId },
+      select: {
+        id: true,
+        originalFileName: true,
+        storageKey: true,
+        mimeType: true,
+        fileSize: true,
+      },
+    });
+
+    if (!document) {
+      return res.status(404).json({ status: "error", message: "Document not found" });
+    }
+
+    // Check if physical file exists on disk (handles legacy metadata-only records cleanly)
+    if (!storageService.fileExists(document.storageKey)) {
+      return res.status(404).json({
+        status: "error",
+        message: "Physical document file not found on server",
+      });
+    }
+
+    res.setHeader("Content-Type", document.mimeType);
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${encodeURIComponent(document.originalFileName)}"`,
+    );
+    res.setHeader("Content-Length", document.fileSize);
+
+    const stream = storageService.getFileStream(document.storageKey);
+    if (!stream) {
+      return res.status(404).json({
+        status: "error",
+        message: "Physical document file not found on server",
+      });
+    }
+
+    stream.on("error", (err) => next(err));
+    return stream.pipe(res);
+  } catch (error) {
+    return next(error);
+  }
+};
+
 const deleteApplicationDocument = async (req, res, next) => {
   try {
     const { applicationId, documentId } = req.params;
@@ -295,57 +434,87 @@ const deleteApplicationDocument = async (req, res, next) => {
       return res.status(400).json({ status: "error", message: "A valid applicationId and documentId are required" });
     }
 
-    await prisma.$transaction(async (transaction) => {
-      const application = await transaction.application.findUnique({
-        where: { id: applicationId },
-        select: {
-          id: true,
-          citizenId: true,
-          status: true,
-        },
-      });
-
-      if (!application) {
-        const error = new Error("Application not found");
-        error.statusCode = 404;
-        throw error;
-      }
-
-      if (application.citizenId !== req.user.id) {
-        const error = new Error("You are not authorized to delete documents from this application");
-        error.statusCode = 403;
-        throw error;
-      }
-
-      if (!DOCUMENT_DELETION_STATUSES.has(application.status)) {
-        const error = new Error("Documents cannot be deleted while the application is in its current status");
-        error.statusCode = 400;
-        throw error;
-      }
-
-      const document = await transaction.applicationDocument.findFirst({
-        where: { id: documentId, applicationId: application.id },
-        select: { id: true, uploadedById: true },
-      });
-
-      if (!document) {
-        const error = new Error("Document not found");
-        error.statusCode = 404;
-        throw error;
-      }
-
-      if (document.uploadedById !== req.user.id) {
-        const error = new Error("Only the citizen who uploaded this document can delete it");
-        error.statusCode = 403;
-        throw error;
-      }
-
-      await transaction.applicationDocument.delete({ where: { id: document.id } });
+    const application = await prisma.application.findUnique({
+      where: { id: applicationId },
+      select: {
+        id: true,
+        citizenId: true,
+        status: true,
+      },
     });
+
+    if (!application) {
+      return res.status(404).json({ status: "error", message: "Application not found" });
+    }
+
+    if (application.citizenId !== req.user.id) {
+      return res.status(403).json({
+        status: "error",
+        message: "You are not authorized to delete documents from this application",
+      });
+    }
+
+    if (!DOCUMENT_DELETION_STATUSES.has(application.status)) {
+      return res.status(400).json({
+        status: "error",
+        message: "Documents cannot be deleted while the application is in its current status",
+      });
+    }
+
+    const document = await prisma.applicationDocument.findFirst({
+      where: { id: documentId, applicationId: application.id },
+      select: { id: true, uploadedById: true, storageKey: true },
+    });
+
+    if (!document) {
+      return res.status(404).json({ status: "error", message: "Document not found" });
+    }
+
+    if (document.uploadedById !== req.user.id) {
+      return res.status(403).json({
+        status: "error",
+        message: "Only the citizen who uploaded this document can delete it",
+      });
+    }
+
+    // 1. Read existing physical file buffer in memory as a compensation backup (if file exists)
+    let existingBuffer = null;
+    try {
+      existingBuffer = await storageService.getFile(document.storageKey);
+    } catch (readErr) {
+      return next(readErr);
+    }
+
+    // 2. Attempt physical file deletion first
+    let physicalDeleted = false;
+    try {
+      physicalDeleted = await storageService.deleteFile(document.storageKey);
+    } catch (fsError) {
+      // If physical deletion fails with a real filesystem error (e.g. EPERM, EACCES, EBUSY),
+      // DO NOT delete database metadata and return a server error!
+      const error = new Error(`Failed to delete physical file from storage: ${fsError.message}`);
+      error.statusCode = 500;
+      return next(error);
+    }
+
+    // 3. Delete database metadata record after physical deletion (or confirmed ENOENT)
+    try {
+      await prisma.applicationDocument.delete({ where: { id: document.id } });
+    } catch (dbError) {
+      // 4. Compensation: if physical file was deleted but DB deletion failed, restore it
+      if (physicalDeleted && existingBuffer) {
+        try {
+          await storageService.saveFile(document.storageKey, existingBuffer);
+        } catch (restoreErr) {
+          console.error("Failed to restore physical file during compensating delete transaction:", restoreErr);
+        }
+      }
+      return next(dbError);
+    }
 
     return res.status(200).json({
       status: "success",
-      message: "Document metadata deleted successfully. No binary file was stored.",
+      message: "Document deleted successfully",
     });
   } catch (error) {
     return next(error);
@@ -356,5 +525,6 @@ module.exports = {
   addApplicationDocument,
   listApplicationDocuments,
   getApplicationDocument,
+  getApplicationDocumentFile,
   deleteApplicationDocument,
 };

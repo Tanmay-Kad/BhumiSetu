@@ -43,3 +43,6 @@ coverage/
 # Misc
 *.pem
 .vercel
+
+# Storage
+backend/storage/
