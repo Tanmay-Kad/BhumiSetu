@@ -9,6 +9,7 @@ const applicationRoutes = require("./applicationRoutes");
 const applicationDocumentRoutes = require("./applicationDocumentRoutes");
 const officerApplicationRoutes = require("./officerApplicationRoutes");
 const notificationRoutes = require("./notificationRoutes");
+const dashboardRoutes = require("./dashboardRoutes");
 
 const router = express.Router();
 
@@ -22,5 +23,6 @@ router.use("/v1/applications", applicationRoutes);
 router.use("/v1/applications", applicationDocumentRoutes);
 router.use("/v1/officer", officerApplicationRoutes);
 router.use("/v1/notifications", notificationRoutes);
+router.use("/v1/dashboard", dashboardRoutes);
 
 module.exports = router;
