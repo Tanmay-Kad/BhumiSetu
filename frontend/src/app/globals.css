@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "leaflet/dist/leaflet.css";
 
 :root {
   --background: #f8fafc;
@@ -34,4 +35,41 @@ body {
 
 .civic-border {
   border-color: #e2e8f0;
+}
+
+/* Leaflet Civic Styling & Scoped Z-Index Overrides */
+.leaflet-container {
+  width: 100%;
+  height: 100%;
+  z-index: 1 !important;
+  font-family: inherit;
+  background-color: #f1f5f9;
+}
+
+.leaflet-pane {
+  z-index: 2 !important;
+}
+
+.leaflet-top,
+.leaflet-bottom {
+  z-index: 10 !important;
+}
+
+.civic-leaflet-popup .leaflet-popup-content-wrapper {
+  background: #ffffff;
+  color: #0f172a;
+  border-radius: 0.5rem;
+  padding: 0;
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1);
+  border: 1px solid #cbd5e1;
+}
+
+.civic-leaflet-popup .leaflet-popup-content {
+  margin: 0;
+  line-height: 1.4;
+}
+
+.civic-leaflet-popup .leaflet-popup-tip {
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
 }

@@ -41,6 +41,23 @@ export interface ParcelSearchParams {
   limit?: number;
 }
 
+export interface ParcelBboxParams {
+  minLng: number;
+  minLat: number;
+  maxLng: number;
+  maxLat: number;
+  page?: number;
+  limit?: number;
+}
+
+export interface ParcelNearbyParams {
+  lng: number;
+  lat: number;
+  radius: number;
+  page?: number;
+  limit?: number;
+}
+
 export interface ParcelSearchResponse {
   status: "success";
   data: Parcel[];

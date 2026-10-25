@@ -14,6 +14,7 @@ import {
   ErrorState,
 } from "@/components/ui";
 import { ParcelCard, ParcelSkeleton } from "@/components/parcels";
+import { ParcelMap } from "@/components/map";
 import { useParcelSearch } from "@/hooks/use-parcel-search";
 import { getMyProperties } from "@/lib/api/parcels";
 import type { Parcel } from "@/types";
@@ -29,6 +30,9 @@ export default function PropertiesPage() {
     goToPage,
     reset,
   } = useParcelSearch();
+
+  // Selected Parcel state for bi-directional map & card synchronization
+  const [selectedParcelId, setSelectedParcelId] = useState<string | null>(null);
 
   // Primary search state
   const [primaryQuery, setPrimaryQuery] = useState("");
@@ -89,6 +93,7 @@ export default function PropertiesPage() {
       }
     }
 
+    setSelectedParcelId(null);
     search({
       ulpin: ulpinParam,
       surveyNumber: surveyParam,
@@ -101,6 +106,7 @@ export default function PropertiesPage() {
   };
 
   const handleReset = () => {
+    setSelectedParcelId(null);
     setPrimaryQuery("");
     setQueryMode("auto");
     setVillage("");
@@ -369,22 +375,9 @@ export default function PropertiesPage() {
         </CardContent>
       </Card>
 
-      {/* 4. Results & States Section */}
+      {/* 4. Results & GIS Map Section */}
       <section aria-labelledby="results-heading" className="space-y-4">
-        {/* Loading State */}
-        {isLoading && (
-          <div className="space-y-4" aria-busy="true" aria-label="Loading parcel search results">
-            <div className="text-xs text-slate-500 font-medium animate-pulse">
-              Searching cadastral registry records...
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <ParcelSkeleton />
-              <ParcelSkeleton />
-            </div>
-          </div>
-        )}
-
-        {/* Error State */}
+        {/* Error State Banner */}
         {!isLoading && error && (
           <ErrorState
             title="Search Request Failed"
@@ -393,120 +386,193 @@ export default function PropertiesPage() {
           />
         )}
 
-        {/* Initial Empty State (Before any search) */}
-        {!isLoading && !error && !hasSearched && (
-          <Card className="border-dashed border-slate-300 bg-slate-50/50">
-            <CardContent className="p-8 text-center space-y-3">
-              <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-emerald-100 text-emerald-800">
-                <svg
-                  className="h-6 w-6"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  aria-hidden="true"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"
-                  />
-                </svg>
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+          {/* Left Column: Cards List & Search States (5 cols on lg, bottom on mobile) */}
+          <div className="order-2 lg:order-1 lg:col-span-5 space-y-4">
+            {/* Loading Skeleton */}
+            {isLoading && (
+              <div className="space-y-4" aria-busy="true" aria-label="Loading parcel search results">
+                <div className="text-xs text-slate-500 font-medium animate-pulse">
+                  Searching cadastral registry records...
+                </div>
+                <div className="space-y-3.5">
+                  <ParcelSkeleton />
+                  <ParcelSkeleton />
+                </div>
               </div>
-              <h2 id="results-heading" className="text-base font-semibold text-slate-800">
-                Search the Cadastral Land Registry
-              </h2>
-              <p className="text-xs text-slate-500 max-w-lg mx-auto leading-relaxed">
-                Enter an official 14-digit ULPIN identifier, village survey number, or specify regional filters above to locate parcel geometry, land classification, and regulatory zoning details.
-              </p>
-              <div className="pt-2 flex flex-wrap items-center justify-center gap-2">
-                <span className="text-xs text-slate-400 font-medium">Quick search examples:</span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setPrimaryQuery("MH-THANE-001-2026");
-                    search({ ulpin: "MH-THANE-001-2026" });
-                  }}
-                  className="text-xs font-mono bg-white px-2.5 py-1 rounded border border-slate-200 text-emerald-800 hover:border-emerald-300"
-                >
-                  MH-THANE-001-2026
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setPrimaryQuery("42/A");
-                    search({ surveyNumber: "42/A" });
-                  }}
-                  className="text-xs font-mono bg-white px-2.5 py-1 rounded border border-slate-200 text-emerald-800 hover:border-emerald-300"
-                >
-                  Survey 42/A
-                </button>
-              </div>
-            </CardContent>
-          </Card>
-        )}
+            )}
 
-        {/* Zero Results Found State */}
-        {!isLoading && !error && hasSearched && results.length === 0 && (
-          <EmptyState
-            title="No Matching Land Parcels Found"
-            description="No parcels in the central registry matched your search parameters. Please verify the identifier spelling, check survey numbering format, or broaden location filters."
-            action={
-              <Button variant="outline" size="sm" onClick={handleReset}>
-                Reset Search Filters
-              </Button>
-            }
-          />
-        )}
+            {/* Initial Empty State (Before search) */}
+            {!isLoading && !error && !hasSearched && (
+              <Card className="border-dashed border-slate-300 bg-slate-50/50">
+                <CardContent className="p-6 text-center space-y-3">
+                  <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-emerald-100 text-emerald-800">
+                    <svg
+                      className="h-6 w-6"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      aria-hidden="true"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"
+                      />
+                    </svg>
+                  </div>
+                  <h2 id="results-heading" className="text-base font-semibold text-slate-800">
+                    Search the Cadastral Land Registry
+                  </h2>
+                  <p className="text-xs text-slate-500 leading-relaxed">
+                    Enter an official 14-digit ULPIN identifier, village survey number, or specify regional filters above to locate parcel geometry and regulatory details.
+                  </p>
+                  <div className="pt-2 flex flex-wrap items-center justify-center gap-2">
+                    <span className="text-xs text-slate-400 font-medium">Quick examples:</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPrimaryQuery("MH-THANE-001-2026");
+                        search({ ulpin: "MH-THANE-001-2026" });
+                      }}
+                      className="text-xs font-mono bg-white px-2.5 py-1 rounded border border-slate-200 text-emerald-800 hover:border-emerald-300"
+                    >
+                      MH-THANE-001-2026
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPrimaryQuery("42/A");
+                        search({ surveyNumber: "42/A" });
+                      }}
+                      className="text-xs font-mono bg-white px-2.5 py-1 rounded border border-slate-200 text-emerald-800 hover:border-emerald-300"
+                    >
+                      Survey 42/A
+                    </button>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
 
-        {/* Results List */}
-        {!isLoading && !error && hasSearched && results.length > 0 && (
-          <div className="space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-200 pb-2">
-              <h2 id="results-heading" className="text-sm font-semibold text-slate-800">
-                Matching Parcels ({pagination?.total ?? results.length})
-              </h2>
-              {pagination && (
-                <span className="text-xs text-slate-500">
-                  Page {pagination.page} of {pagination.totalPages}
-                </span>
-              )}
-            </div>
+            {/* Zero Results State */}
+            {!isLoading && !error && hasSearched && results.length === 0 && (
+              <EmptyState
+                title="No Matching Land Parcels Found"
+                description="No parcels in the central registry matched your search parameters. Please verify the identifier spelling, check survey numbering format, or broaden location filters."
+                action={
+                  <Button variant="outline" size="sm" onClick={handleReset}>
+                    Reset Search Filters
+                  </Button>
+                }
+              />
+            )}
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {results.map((parcel) => (
-                <ParcelCard key={parcel.id} parcel={parcel} />
-              ))}
-            </div>
-
-            {/* Pagination Controls */}
-            {pagination && pagination.totalPages > 1 && (
-              <div className="pt-4 flex items-center justify-between border-t border-slate-200">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => goToPage(pagination.page - 1)}
-                  disabled={pagination.page <= 1}
-                >
-                  ← Previous
-                </Button>
-
-                <div className="text-xs text-slate-600 font-medium">
-                  Page {pagination.page} of {pagination.totalPages} ({pagination.total} records)
+            {/* Results List */}
+            {!isLoading && !error && hasSearched && results.length > 0 && (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+                  <h2 id="results-heading" className="text-sm font-semibold text-slate-800">
+                    Matching Parcels ({pagination?.total ?? results.length})
+                  </h2>
+                  {pagination && (
+                    <span className="text-xs text-slate-500">
+                      Page {pagination.page} of {pagination.totalPages}
+                    </span>
+                  )}
                 </div>
 
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => goToPage(pagination.page + 1)}
-                  disabled={pagination.page >= pagination.totalPages}
-                >
-                  Next →
-                </Button>
+                <div className="space-y-3.5">
+                  {results.map((parcel) => (
+                    <ParcelCard
+                      key={parcel.id}
+                      parcel={parcel}
+                      isSelected={parcel.id === selectedParcelId}
+                      onSelect={(p) => setSelectedParcelId(p.id)}
+                      onFocusMap={(p) => setSelectedParcelId(p.id)}
+                    />
+                  ))}
+                </div>
+
+                {/* Pagination Controls */}
+                {pagination && pagination.totalPages > 1 && (
+                  <div className="pt-4 flex items-center justify-between border-t border-slate-200">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => goToPage(pagination.page - 1)}
+                      disabled={pagination.page <= 1}
+                    >
+                      ← Previous
+                    </Button>
+
+                    <div className="text-xs text-slate-600 font-medium">
+                      Page {pagination.page} of {pagination.totalPages} ({pagination.total} records)
+                    </div>
+
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => goToPage(pagination.page + 1)}
+                      disabled={pagination.page >= pagination.totalPages}
+                    >
+                      Next →
+                    </Button>
+                  </div>
+                )}
               </div>
             )}
           </div>
-        )}
+
+          {/* Right Column: Interactive GIS Map Viewer (7 cols on lg, sticky on desktop, top on mobile) */}
+          <div className="order-1 lg:order-2 lg:col-span-7 lg:sticky lg:top-20 space-y-2">
+            <div className="flex items-center justify-between px-1">
+              <div className="flex items-center gap-2">
+                <h3 className="text-xs font-semibold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+                  <svg
+                    className="h-4 w-4 text-emerald-800"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    aria-hidden="true"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"
+                    />
+                  </svg>
+                  <span>Interactive GIS Map</span>
+                </h3>
+                {selectedParcelId && (
+                  <span className="text-[11px] font-mono text-emerald-900 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                    Selected: {results.find((p) => p.id === selectedParcelId)?.ulpin || selectedParcelId.slice(0, 8)}
+                  </span>
+                )}
+              </div>
+
+              {selectedParcelId && (
+                <button
+                  type="button"
+                  onClick={() => setSelectedParcelId(null)}
+                  className="text-[11px] text-slate-500 hover:text-slate-800 underline focus:outline-none"
+                >
+                  Clear selection
+                </button>
+              )}
+            </div>
+
+            <div className="h-[360px] sm:h-[440px] lg:h-[600px] w-full rounded-lg shadow-xs overflow-hidden border border-slate-200 bg-slate-100">
+              <ParcelMap
+                parcels={results}
+                selectedParcelId={selectedParcelId}
+                onSelectParcel={(parcel) => setSelectedParcelId(parcel.id)}
+                isLoading={isLoading}
+              />
+            </div>
+          </div>
+        </div>
       </section>
     </div>
   );

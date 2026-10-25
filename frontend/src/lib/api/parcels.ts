@@ -2,6 +2,8 @@ import { api } from "./client";
 import type {
   Parcel,
   ParcelSearchParams,
+  ParcelBboxParams,
+  ParcelNearbyParams,
   ParcelSearchResponse,
   ParcelDetailResponse,
   MyPropertiesResponse,
@@ -75,4 +77,41 @@ export async function getParcelDossier(parcelId: string): Promise<ParcelDossierD
     throw new Error("Parcel dossier could not be retrieved");
   }
   return response.data;
+}
+
+/**
+ * Retrieves parcels intersecting a spatial bounding box.
+ * Consumes GET /api/v1/parcels/spatial/bbox
+ */
+export async function getParcelsInBbox(
+  params: ParcelBboxParams
+): Promise<ParcelSearchResponse> {
+  const query = new URLSearchParams({
+    minLng: String(params.minLng),
+    minLat: String(params.minLat),
+    maxLng: String(params.maxLng),
+    maxLat: String(params.maxLat),
+  });
+  if (params.page !== undefined && params.page > 0) query.set("page", String(params.page));
+  if (params.limit !== undefined && params.limit > 0) query.set("limit", String(params.limit));
+
+  return api.get<ParcelSearchResponse>(`/parcels/spatial/bbox?${query.toString()}`);
+}
+
+/**
+ * Retrieves parcels nearby a geographic coordinate point within a radius.
+ * Consumes GET /api/v1/parcels/spatial/nearby
+ */
+export async function getParcelsNearby(
+  params: ParcelNearbyParams
+): Promise<ParcelSearchResponse> {
+  const query = new URLSearchParams({
+    lng: String(params.lng),
+    lat: String(params.lat),
+    radius: String(params.radius),
+  });
+  if (params.page !== undefined && params.page > 0) query.set("page", String(params.page));
+  if (params.limit !== undefined && params.limit > 0) query.set("limit", String(params.limit));
+
+  return api.get<ParcelSearchResponse>(`/parcels/spatial/nearby?${query.toString()}`);
 }
